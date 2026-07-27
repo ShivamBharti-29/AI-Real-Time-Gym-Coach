@@ -39,18 +39,23 @@ def main():
     initial_session_defaults()
 
     if "voice_pipeline" not in st.session_state:
-        try:
-            api_key = os.environ.get("GROQ_API_KEY", "")
+        api_key = os.environ.get("GROQ_API_KEY", "")
 
-            if not api_key and hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-                api_key = st.secrets["GROQ_API_KEY"]
-            
-            groq_client = Groq(api_key=api_key)
-            llm_coach = LLMCoach(groq_client)
-            tts = TextToSpeech()
-            st.session_state.voice_pipeline = VoicePipeline(llm_coach, tts)
-        except Exception as e:
+        if not api_key and hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+            api_key = st.secrets["GROQ_API_KEY"]
+
+        if not api_key:
+            st.warning("GROQ_API_KEY is not configured. AI voice coaching is disabled until the API key is provided.")
             st.session_state.voice_pipeline = None
+        else:
+            try:
+                groq_client = Groq(api_key=api_key)
+                llm_coach = LLMCoach(groq_client)
+                tts = TextToSpeech()
+                st.session_state.voice_pipeline = VoicePipeline(llm_coach, tts)
+            except Exception:
+                st.warning("Voice coaching is unavailable. Please verify the GROQ_API_KEY and your network access.")
+                st.session_state.voice_pipeline = None
 
     workout_started = st.session_state.get("workout_started", False)
     
@@ -205,13 +210,27 @@ def main():
             key="exercise-analysis",
             mode=WebRtcMode.SENDRECV,
             video_processor_factory=VideoProcessorClass,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+            rtc_configuration={
+                "iceServers": [
+                    {
+                        "urls": [
+                            "stun:stun.l.google.com:19302",
+                            "stun:stun1.l.google.com:19302",
+                            "stun:stun2.l.google.com:19302",
+                        ]
+                    }
+                ]
+            },
             media_stream_constraints={
                 "video": True,
                 "audio": False
             },
             async_processing=True
         )
+
+        if context and getattr(context, "state", None) is not None:
+            if not getattr(context.state, "playing", False):
+                st.info("Camera access is required for real-time coaching. Please allow camera permissions and reload if the connection is still pending.")
 
         sync_metrics_update(context)
 
