@@ -39,18 +39,23 @@ def main():
     initial_session_defaults()
 
     if "voice_pipeline" not in st.session_state:
-        try:
-            api_key = os.environ.get("GROQ_API_KEY", "")
+        api_key = os.environ.get("GROQ_API_KEY", "")
 
-            if not api_key and hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
-                api_key = st.secrets["GROQ_API_KEY"]
-            
-            groq_client = Groq(api_key=api_key)
-            llm_coach = LLMCoach(groq_client)
-            tts = TextToSpeech()
-            st.session_state.voice_pipeline = VoicePipeline(llm_coach, tts)
-        except Exception as e:
+        if not api_key and hasattr(st, "secrets") and "GROQ_API_KEY" in st.secrets:
+            api_key = st.secrets["GROQ_API_KEY"]
+
+        if not api_key:
+            st.warning("GROQ_API_KEY is not configured. AI voice coaching is disabled until the API key is provided.")
             st.session_state.voice_pipeline = None
+        else:
+            try:
+                groq_client = Groq(api_key=api_key)
+                llm_coach = LLMCoach(groq_client)
+                tts = TextToSpeech()
+                st.session_state.voice_pipeline = VoicePipeline(llm_coach, tts)
+            except Exception:
+                st.warning("Voice coaching is unavailable. Please verify the GROQ_API_KEY and your network access.")
+                st.session_state.voice_pipeline = None
 
     workout_started = st.session_state.get("workout_started", False)
     
@@ -200,25 +205,99 @@ def main():
             unsafe_allow_html=True,
         )
     else:
-        context = webrtc_streamer(
-            key="exercise-analysis",
-            mode=WebRtcMode.SENDRECV,
-            video_processor_factory=VideoProcessorClass,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-            media_stream_constraints={
-                "video": True,
-                "audio": False
-            },
-            async_processing=True
-        )
+        # Use a robust RTC configuration with multiple STUN servers and handle
+        # startup failures gracefully so the app doesn't crash during WebRTC
+        # initialization in restrictive environments.
+        rtc_configuration = {
+            "iceServers": [
+                {"urls": [
+                    "stun:stun.l.google.com:19302",
+                    "stun:stun1.l.google.com:19302",
+                    "stun:stun2.l.google.com:19302"
+                ]},
+                {"urls": ["stun:stun.stunprotocol.org:3478"]},
+                {"urls": ["stun:stun.services.mozilla.com:3478"]}
+            ]
+        }
+
+        try:
+            context = webrtc_streamer(
+                key="exercise-analysis",
+                mode=WebRtcMode.SENDRECV,
+                video_processor_factory=VideoProcessorClass,
+                rtc_configuration=rtc_configuration,
+                media_stream_constraints={
+                    "video": True,
+                    "audio": False
+                },
+                async_processing=True
+            )
+        except Exception as e:
+            st.error(f"WebRTC failed to start: {e}")
+            context = None
+
+        # Helpful UI when connection isn't established
+        if context is None:
+            st.warning("Unable to create WebRTC context. Please check browser camera permissions and your network/firewall settings.")
+        else:
+            try:
+                playing = getattr(context.state, "playing", None)
+                has_user_media = getattr(context.state, "user_media", None)
+                st.markdown(f"**WebRTC status:** playing={playing}, user_media={has_user_media}")
+                if not playing:
+                    st.warning("Connection is taking longer than expected. If you see this for long, try: 1) Allow camera access in the browser, 2) Use Chrome/Edge, 3) Disable VPN/firewall or try another network.")
+            except Exception:
+                st.info("WebRTC context created; if video doesn't start, check browser camera permission and network (STUN/TURN).")
 
         sync_metrics_update(context)
 
-        if context.state.playing:
+        # If the connection is active and playing, rerun periodically to update metrics
+        if context and getattr(context.state, "playing", False):
             time.sleep(0.25)
             st.rerun()
 
         inject_webrtc_styles()
+
+        # In-app camera diagnostic: opens a small client-side test that enumerates devices
+        # and attempts to start getUserMedia directly in the browser. This helps determine
+        # whether the issue is permissions, iframe sandboxing, or network (ICE/STUN).
+        import streamlit.components.v1 as components
+
+        if st.button("Run camera diagnostic"):
+            camera_test_html = r'''
+            <div style="font-family: sans-serif; padding: 12px;">
+              <h3>Camera diagnostic</h3>
+              <div id="out" style="white-space: pre-wrap; background:#111; color:#0f0; padding:8px; height:160px; overflow:auto; border-radius:6px;"></div>
+              <video id="v" autoplay playsinline muted style="width:100%; max-height:240px; margin-top:8px; background:#000; border-radius:6px;"></video>
+              <script>
+                const out = document.getElementById('out');
+                const video = document.getElementById('v');
+                function log(msg){ out.textContent += msg + '\n'; }
+
+                (async function(){
+                  try{
+                    log('enumerating devices...');
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    devices.forEach(d=> log(`${d.kind} | ${d.label || 'label-hidden'} | id:${d.deviceId}`));
+                    const hasVideo = devices.some(d=>d.kind==='videoinput');
+                    log('has videoinput: ' + hasVideo);
+
+                    log('requesting camera access...');
+                    const s = await navigator.mediaDevices.getUserMedia({video:true});
+                    log('got MediaStream');
+                    video.srcObject = s;
+                  }catch(e){
+                    log('ERROR: ' + e.name + ' - ' + e.message);
+                    log('Hint: If you see NotAllowedError, allow camera access in the browser (lock icon -> Camera -> Allow).');
+                    log('If you see SecurityError or a message about iframes/sandboxing, open the app directly in a new tab (not embedded) and ensure the URL is https://*.streamlit.app');
+                    log('If you see NotFoundError, ensure the device has a camera and it is not in use by another app.');
+                    log('Also try in Incognito with extensions disabled to rule out extension interference.');
+                  }
+                })();
+              </script>
+            </div>
+            '''
+            components.html(camera_test_html, height=480, scrolling=True)
 
     st.divider()
 

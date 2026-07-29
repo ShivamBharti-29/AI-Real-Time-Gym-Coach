@@ -7,11 +7,17 @@ except Exception as e:
     _cv2_import_error = e
 import av
 import numpy as np
-import mediapipe as mp
 import threading
 from streamlit_webrtc import VideoProcessorBase
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+
+# Defer importing MediaPipe-related modules until runtime initialization to avoid
+# import-time crashes on platforms that don't have OpenCV or the native
+# dependencies required by MediaPipe (e.g., headless servers / Streamlit Cloud).
+mp = None
+python = None
+vision = None
+_mediapipe_import_error = None
+
 from detectors.squat import SquatDetector
 from detectors.pushup import PushUpDetector
 from detectors.biceps_curl import BicepsCurlDetector
@@ -26,19 +32,38 @@ class VideoProcessorClass(VideoProcessorBase):
         self._latest_metrics = None
         self._exercise_type = "Squats"
 
-        model_path = os.path.join(os.getcwd(), "ml_models", "pose_landmarker_full.task")
-        base_option = python.BaseOptions(model_asset_path=model_path)
+        # Attempt to import and initialize MediaPipe components. If this fails
+        # (for example because cv2 or native libs are missing in the environment),
+        # set _landmarker to None so the app keeps running and recv() can pass
+        # frames through instead of crashing at import time.
+        try:
+            global mp, python, vision, _mediapipe_import_error
+            import mediapipe as mp
+            from mediapipe.tasks import python as _python
+            from mediapipe.tasks.python import vision as _vision
+            python = _python
+            vision = _vision
+            _mediapipe_import_error = None
 
-        options = vision.PoseLandmarkerOptions(
-            base_options=base_option,
-            running_mode=vision.RunningMode.VIDEO,
-            min_pose_detection_confidence=0.7,
-            min_pose_presence_confidence=0.7,
-            min_tracking_confidence=0.7,
-            output_segmentation_masks=False
-        )
+            model_path = os.path.join(os.getcwd(), "ml_models", "pose_landmarker_full.task")
+            base_option = python.BaseOptions(model_asset_path=model_path)
 
-        self._landmarker = vision.PoseLandmarker.create_from_options(options)
+            options = vision.PoseLandmarkerOptions(
+                base_options=base_option,
+                running_mode=vision.RunningMode.VIDEO,
+                min_pose_detection_confidence=0.7,
+                min_pose_presence_confidence=0.7,
+                min_tracking_confidence=0.7,
+                output_segmentation_masks=False
+            )
+
+            self._landmarker = vision.PoseLandmarker.create_from_options(options)
+        except Exception as e:
+            # Could not import or initialize MediaPipe (or a dependency like cv2).
+            # Leave landmarker as None; recv() will detect this and return frames
+            # unmodified so the app remains usable.
+            self._landmarker = None
+            _mediapipe_import_error = e
 
         self._detectors = {
             "Squats": SquatDetector(),
@@ -194,9 +219,9 @@ class VideoProcessorClass(VideoProcessorBase):
         )
 
     def recv(self, frame):
-        # If OpenCV isn't available in the runtime (e.g. not installed on Streamlit Cloud),
+        # If OpenCV or MediaPipe aren't available in the runtime (e.g. not installed on Streamlit Cloud),
         # skip all processing and pass the frame through so the app doesn't crash at import time.
-        if cv2 is None:
+        if cv2 is None or mp is None or self._landmarker is None:
             # Processing is disabled; return incoming frame as-is.
             return frame
 
