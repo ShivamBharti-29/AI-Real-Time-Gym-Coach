@@ -258,6 +258,47 @@ def main():
 
         inject_webrtc_styles()
 
+        # In-app camera diagnostic: opens a small client-side test that enumerates devices
+        # and attempts to start getUserMedia directly in the browser. This helps determine
+        # whether the issue is permissions, iframe sandboxing, or network (ICE/STUN).
+        import streamlit.components.v1 as components
+
+        if st.button("Run camera diagnostic"):
+            camera_test_html = r'''
+            <div style="font-family: sans-serif; padding: 12px;">
+              <h3>Camera diagnostic</h3>
+              <div id="out" style="white-space: pre-wrap; background:#111; color:#0f0; padding:8px; height:160px; overflow:auto; border-radius:6px;"></div>
+              <video id="v" autoplay playsinline muted style="width:100%; max-height:240px; margin-top:8px; background:#000; border-radius:6px;"></video>
+              <script>
+                const out = document.getElementById('out');
+                const video = document.getElementById('v');
+                function log(msg){ out.textContent += msg + '\n'; }
+
+                (async function(){
+                  try{
+                    log('enumerating devices...');
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    devices.forEach(d=> log(`${d.kind} | ${d.label || 'label-hidden'} | id:${d.deviceId}`));
+                    const hasVideo = devices.some(d=>d.kind==='videoinput');
+                    log('has videoinput: ' + hasVideo);
+
+                    log('requesting camera access...');
+                    const s = await navigator.mediaDevices.getUserMedia({video:true});
+                    log('got MediaStream');
+                    video.srcObject = s;
+                  }catch(e){
+                    log('ERROR: ' + e.name + ' - ' + e.message);
+                    log('Hint: If you see NotAllowedError, allow camera access in the browser (lock icon -> Camera -> Allow).');
+                    log('If you see SecurityError or a message about iframes/sandboxing, open the app directly in a new tab (not embedded) and ensure the URL is https://*.streamlit.app');
+                    log('If you see NotFoundError, ensure the device has a camera and it is not in use by another app.');
+                    log('Also try in Incognito with extensions disabled to rule out extension interference.');
+                  }
+                })();
+              </script>
+            </div>
+            '''
+            components.html(camera_test_html, height=480, scrolling=True)
+
     st.divider()
 
     st.markdown("#### Workout History")
