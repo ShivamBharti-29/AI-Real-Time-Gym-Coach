@@ -201,21 +201,51 @@ def main():
             unsafe_allow_html=True,
         )
     else:
-        context = webrtc_streamer(
-            key="exercise-analysis",
-            mode=WebRtcMode.SENDRECV,
-            video_processor_factory=VideoProcessorClass,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-            media_stream_constraints={
-                "video": True,
-                "audio": False
-            },
-            async_processing=True
-        )
+        rtc_configuration = {
+            "iceServers": [
+                {"urls": [
+                    "stun:stun.l.google.com:19302",
+                    "stun:stun1.l.google.com:19302",
+                    "stun:stun2.l.google.com:19302"
+                ]},
+                {"urls": ["stun:stun.stunprotocol.org:3478"]},
+                {"urls": ["stun:stun.services.mozilla.com:3478"]}
+            ]
+        }
+
+        try:
+            context = webrtc_streamer(
+                key="exercise-analysis",
+                mode=WebRtcMode.SENDRECV,
+                video_processor_factory=VideoProcessorClass,
+                rtc_configuration=rtc_configuration,
+                media_stream_constraints={
+                    "video": True,
+                    "audio": False
+                },
+                async_processing=True
+            )
+        except Exception as e:
+            st.error(f"WebRTC failed to start: {e}")
+            context = None
+
+        # Debugging / helpful UI when connection isn't established
+        if context is None:
+            st.warning("Unable to create WebRTC context. Please check browser camera permissions and your network/firewall settings.")
+        else:
+            try:
+                playing = getattr(context.state, "playing", None)
+                has_user_media = getattr(context.state, "user_media", None)
+                st.markdown(f"**WebRTC status:** playing={playing}, user_media={has_user_media}")
+                if not playing:
+                    st.warning("Connection is taking longer than expected. If you see this for long, try: 1) Allow camera access in the browser, 2) Use Chrome/Edge, 3) Disable VPN/firewall or try another network.")
+            except Exception:
+                st.info("WebRTC context created; if video doesn't start, check browser camera permission and network (STUN/TURN).")
 
         sync_metrics_update(context)
 
-        if context.state.playing:
+        # If the connection is active and playing, rerun periodically to update metrics
+        if context and getattr(context.state, "playing", False):
             time.sleep(0.25)
             st.rerun()
 
