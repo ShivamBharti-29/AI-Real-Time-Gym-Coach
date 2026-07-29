@@ -1,5 +1,10 @@
 import os
-import cv2
+try:
+    import cv2
+    _cv2_import_error = None
+except Exception as e:
+    cv2 = None
+    _cv2_import_error = e
 import av
 import numpy as np
 import mediapipe as mp
@@ -195,6 +200,12 @@ class VideoProcessorClass(VideoProcessorBase):
         )
 
     def recv(self, frame):
+        # If OpenCV isn't available in the runtime (e.g. not installed on Streamlit Cloud),
+        # skip all processing and pass the frame through so the app doesn't crash at import time.
+        if cv2 is None:
+            # Processing is disabled; return incoming frame as-is.
+            return frame
+
         image = np.asarray(
             cv2.flip(frame.to_ndarray(format="bgr24"), 1),
             dtype=np.uint8
