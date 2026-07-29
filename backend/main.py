@@ -1,6 +1,6 @@
+from dotenv import load_dotenv
 import streamlit as st
 import os
-from dotenv import load_dotenv
 import time
 import pandas as pd
 from services.auth.login_wall import render_login_wall
@@ -19,7 +19,7 @@ from services.coaching.voice_pipeline import VoicePipeline, autoplay_audio
 
 load_dotenv()
 
-
+  
 def main():
     st.set_page_config(
         page_icon="🏋️‍♀️",
@@ -90,7 +90,6 @@ def main():
                 st.session_state.last_saved_sets_completed = 0
 
                 if st.session_state.voice_pipeline:
-                    print("Voice pipeline exists:", st.session_state.voice_pipeline)
                     result = st.session_state.voice_pipeline.process_event(
                         event="workout_started",
                         exercise=plan_exercise,

@@ -1,5 +1,10 @@
 import os
-import cv2
+try:
+    import cv2
+    _cv2_import_error = None
+except Exception as e:
+    cv2 = None
+    _cv2_import_error = e
 import av
 import numpy as np
 import mediapipe as mp
@@ -21,15 +26,9 @@ class VideoProcessorClass(VideoProcessorBase):
         self._latest_metrics = None
         self._exercise_type = "Squats"
 
-        BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        MODEL_PATH = os.path.join(BASE_DIR, "ml_models", "pose_landmarker_full.task")
+        model_path = os.path.join(os.getcwd(), "ml_models", "pose_landmarker_full.task")
+        base_option = python.BaseOptions(model_asset_path=model_path)
 
-        print("Loading model from:", MODEL_PATH)
-        print("Model exists:", os.path.exists(MODEL_PATH))
-
-        base_option = python.BaseOptions(model_asset_path=MODEL_PATH)
-
-      
         options = vision.PoseLandmarkerOptions(
             base_options=base_option,
             running_mode=vision.RunningMode.VIDEO,
@@ -195,6 +194,12 @@ class VideoProcessorClass(VideoProcessorBase):
         )
 
     def recv(self, frame):
+        # If OpenCV isn't available in the runtime (e.g. not installed on Streamlit Cloud),
+        # skip all processing and pass the frame through so the app doesn't crash at import time.
+        if cv2 is None:
+            # Processing is disabled; return incoming frame as-is.
+            return frame
+
         image = np.asarray(
             cv2.flip(frame.to_ndarray(format="bgr24"), 1),
             dtype=np.uint8
